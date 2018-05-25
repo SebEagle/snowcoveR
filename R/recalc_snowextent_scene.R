@@ -21,6 +21,7 @@
 
 recalc_snowextent_scene <- function(store_directory, dem_subdir, height_zone_size, threshold1_snow, threshold2_cloud){
 
+  file_name <- paste(store_directory, "statistics_recalced.txt", sep = "")
   # set subfolder directories
   satellite <-  c("Sentinel/", "Landsat/")    # Satellite subfolders
   subfolder <-  "/testsite/"                  # subfolder within satellite subfolders, where testsite scene are stored
@@ -41,11 +42,26 @@ recalc_snowextent_scene <- function(store_directory, dem_subdir, height_zone_siz
     ##### get date of acquisition for image filename from satellite scene foldername, and DEM file with the fitting resolution
     if(satellite[num]=="Sentinel/"){
       dates <- str_sub(file_list, start = 12, end =19)
+      sat = "Sentinel"
       dem <- raster(paste(dem_store, "dem20.tif", sep = ""))
     }else{
       dates <- str_sub(file_list, start = 11, end =18)
+      sat = "Landsat"
       dem <- raster(paste(dem_store, "dem30.tif", sep = ""))
     }
+
+    #--------------------------------------------------------------------------------------------------
+    ##### create dataframe for overall statistics
+    sat_col <- rep(sat, file_numb)                                          # create a vector with Satellite name for overall statistics
+    snowcover <- vector(mode="numeric", length=file_numb)                   # vector for snow cover
+    # create dataframe from vectors above for overall statistics (contains Satellite, date of acquisition, cover percentages)
+    stats <- data.frame(sat_col, dates, snowcover)
+
+    ##### calculate dem height pixel distribution for 100m heigth zones
+    dem_vector <- as.vector(dem)/height_zone_size                                            # get pixels heigth zone
+    dem_int <- as.integer(dem_vector)                                           # discrete values
+    min_dem <- min(dem_int)                                                     # get min heigth zone
+    max_dem <- max(dem_int)                                                     # get max heigth zone
 
     ##### adjust dem values so that they fit to the row number of the heigth zone statistics
     dem <- as.integer(dem/height_zone_size)
@@ -99,10 +115,46 @@ recalc_snowextent_scene <- function(store_directory, dem_subdir, height_zone_siz
         save_dir <- paste(data_store,file_list[n_elements],subfolder,"new_snow.tif", sep = "")
         writeRaster(new_snow,save_dir, format="GTiff", overwrite=TRUE)
 
+
+
+        #--------------------------------------------------------------------------------------------------
+        ##### calculate overall snow/cloud cover statistics
+        data_vector <- as.vector(new_snow)
+        pixel_number <- sum(data_vector >= 0, na.rm = TRUE)
+        stats$snowcover[n_elements] <- sum(data_vector == 1, na.rm = TRUE)/pixel_number*100
+
+        #--------------------------------------------------------------------------------------------------
+        ############### calculate dem heigth zone statistics ###############
+
+        ##### calculate statistics for each height zone, snowcover/cloudcover/freesurface percentage, by beforehand counted number of pixels per heigth zone
+        for (height in min_dem:max_dem) {
+          pos_list <- height-min_dem+1
+          sub_vector <- data_vector[dem_int==height]
+          dem_stats$snowcover[pos_list] <- sum(sub_vector == 1, na.rm = TRUE)/dem_stats$number_of_pixels[pos_list]*100
+        }
+
+        dem_stats <- dem_stats[,-c(3,5)]
+
+        ##### store dem height zone statistics in txt-file in Satellite scene subfolder
+        dem_stats_dir <- paste(data_store,file_list[n_elements],"/dem_stat_recalc.txt", sep = "")
+        write.table(dem_stats,dem_stats_dir,sep=";", row.names = FALSE, col.names = TRUE)
+
+        ############### end calculation of dem heigth zone statistics ###############
+        #--------------------------------------------------------------------------------------------------
+
       }else{
         #print("no")
       }
 
     }
+    ##### merge overall statistics from both satellites
+    if(num==1){
+      all_stats <- stats
+    }else{
+      all_stats <- bind_rows(stats,all_stats)
+    }
   }
+  all_stats <- all_stats[which(all_stats$snowcover>0),]
+  ##### save overall statistics as txt-file in project folder (store_directory)
+  write.table(all_stats,file_name,sep=";", row.names = FALSE, col.names = TRUE)
 }
